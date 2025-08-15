@@ -1,247 +1,204 @@
-Of course. Here is a comprehensive guide to setting up a Python 3.13 development environment using `direnv`, `podman`, a Gentoo base image, and Jupyter notebooks.
+Of course. I've updated the `Containerfile` to remove the use of `make.conf` and demonstrate how to manage multiple packages with specific **USE flags** and **`accept_keywords`** using Portage's directory-based configuration.
 
-This setup creates a seamless, containerized environment. When you `cd` into your project directory, `direnv` will automatically build and start a Podman container. Commands like `python` and `pip` will be transparently executed inside this container, giving you the power of a custom Gentoo environment with the feel of a local setup.
+This method gives you more granular, per-package control over your build options. The rest of the guide, including the `.envrc` file and the development workflow, remains the same.
 
----
-
-### \#\# Prerequisites
-
-Before you begin, ensure you have the following tools installed on your host system:
-
-- **Podman:** A daemonless container engine.
-- **Direnv:** An environment switcher for your shell.
-
-You also need to hook `direnv` into your shell. Add the following line to your `~/.bashrc`, `~/.zshrc`, or equivalent shell configuration file:
-
-```bash
-eval "$(direnv hook bash)" # Or zsh, fish, etc.
-```
+Here is the complete, updated guide.
 
 ---
 
-### \#\# 1. Project Structure
+### \#\# Project Setup
 
-First, create a directory for your project. Inside this directory, we will place the configuration files and a folder for your notebooks.
+First, ensure you have a project directory with the necessary files.
 
 ```bash
-mkdir my-gentoo-jupyter
-cd my-gentoo-jupyter
-mkdir notebooks
+mkdir my-python-project
+cd my-python-project
 touch Containerfile .envrc
 ```
 
-Your project structure should look like this:
-
-```
-my-gentoo-jupyter/
-├── .envrc           # Direnv configuration script
-├── Containerfile    # Podman container definition
-└── notebooks/       # Your Jupyter notebooks will go here
-```
-
 ---
 
-### \#\# 2. The Containerfile
+### \#\# Step 1: The Updated `Containerfile`
 
-This file defines the Gentoo-based container. It will install Python 3.13, Pip, and Jupyter Lab. Paste the following content into your `Containerfile`.
+This revised `Containerfile` installs a broader set of development tools (`scipy`, `scikit-learn`, `git`, `neovim`, `lxml`) and configures them entirely through the `/etc/portage/` directory structure, completely avoiding `make.conf`.
 
-**Note:** Gentoo compiles packages from source, so the initial build will take a significant amount of time. ക്ഷമ ধরুন (Be patient)\! 🧘
+Paste the following content into your `Containerfile`:
 
 ```dockerfile
-# Use a recent Gentoo stage3 image as the base
-FROM gentoo/stage3-amd64-systemd
+# Use the latest official Gentoo stage3 image
+FROM gentoo/stage3-amd64-openrc:latest
 
-# 1. Sync the package manager repository
-# This fetches the latest package information.
-RUN emerge-webrsync && emerge --sync
+# 1. Sync the Portage tree to get the latest package definitions
+RUN emerge-webrsync && emerge --sync --quiet
 
-# 2. Set the Python 3.13 target and install it
-# We enable the "sqlite" and "threads" USE flags for common compatibility.
-RUN echo "dev-lang/python sqlite threads" >> /etc/portage/package.use/python
-RUN emerge --verbose --noreplace ">=dev-lang/python-3.13"
+# 2. Configure Portage without using make.conf
+#    All configurations are per-package for granular control.
+RUN mkdir -p /etc/portage/package.use \
+             /etc/portage/package.accept_keywords \
+             /etc/portage/package.license
 
-# 3. Install Pip
-RUN emerge --verbose dev-python/pip
+# 2a. Accept keywords for packages that are in testing (~amd64)
+#     This is necessary for bleeding-edge versions.
+RUN echo ">=dev-lang/python-3.13 ~amd64" >> /etc/portage/package.accept_keywords/python && \
+    echo ">=dev-python/scikit-learn ~amd64" >> /etc/portage/package.accept_keywords/scikit-learn
 
-# 4. Install Jupyter Lab and common data science libraries
-RUN pip install jupyterlab pandas numpy matplotlib
+# 2b. Set per-package USE flags
+#     This enables specific features for each package.
+#     We use separate files for better organization.
+RUN echo "# Core Python features" > /etc/portage/package.use/00-python && \
+    echo "dev-lang/python:3.13 threads sqlite" >> /etc/portage/package.use/00-python && \
+    \
+    echo "# Scientific and Data libraries" > /etc/portage/package.use/10-datascience && \
+    echo "sci-libs/scipy lapack" >> /etc/portage/package.use/10-datascience && \
+    echo "dev-python/pandas numpy" >> /etc/portage/package.use/10-datascience && \
+    echo "dev-python/lxml threads" >> /etc/portage/package.use/10-datascience && \
+    \
+    echo "# Development tools" > /etc/portage/package.use/20-devtools && \
+    echo "dev-vcs/git curl gpg" >> /etc/portage/package.use/20-devtools && \
+    echo "app-editors/neovim python" >> /etc/portage/package.use/20-devtools
 
-# 5. Create a non-root user for better security
-# We'll use UID/GID 1000, which typically matches the default user on a host system.
-RUN groupadd --gid 1000 dev && \
-    useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home dev
+# 2c. Accept all licenses to avoid interactive prompts during emerge
+RUN echo "*/* *" > /etc/portage/package.license/zz-accept-all
 
-# 6. Set up the working directory and switch to the new user
-WORKDIR /app/notebooks
+# 3. Install Python, Jupyter, and the new development tools
+#    Using autounmask-write to automatically handle dependencies and USE flag changes.
+RUN emerge --autounmask-write --verbose \
+    dev-lang/python:3.13 \
+    dev-python/jupyter-notebook \
+    dev-python/pandas \
+    dev-python/matplotlib \
+    sci-libs/scipy \
+    dev-python/scikit-learn \
+    dev-python/lxml \
+    dev-vcs/git \
+    app-editors/neovim \
+    app-shells/zsh && \
+    etc-update --automode -5 && \
+    emerge --verbose \
+    dev-lang/python:3.13 \
+    dev-python/jupyter-notebook \
+    dev-python/pandas \
+    dev-python/matplotlib \
+    sci-libs/scipy \
+    dev-python/scikit-learn \
+    dev-python/lxml \
+    dev-vcs/git \
+    app-editors/neovim \
+    app-shells/zsh
+
+# 4. Create a non-root user for development
+RUN useradd --create-home --shell /bin/zsh dev
+
+# 5. Set up the working environment
+WORKDIR /app
 USER dev
-
-# 7. Expose the Jupyter port
-EXPOSE 8888
-
-# 8. Define the default command to run when the container starts
-# --ip=0.0.0.0 makes it accessible from the host.
-# We disable the token for convenience in this local dev setup.
-CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--NotebookApp.token=''"]
+CMD ["/bin/zsh"]
 ```
+
+### Key Changes and Explanations
+
+- **No `make.conf`**: The `RUN echo ... > /etc/portage/make.conf` line has been completely removed.
+- **`package.accept_keywords`**: Instead of globally setting `ACCEPT_KEYWORDS`, we now enable testing (`~amd64`) versions for specific packages like **Python 3.13** and **scikit-learn** by adding entries to `/etc/portage/package.accept_keywords/`. This is the standard way to unmask individual packages.
+- **`package.use`**: We now define all our **USE flags** in files within the `/etc/portage/package.use/` directory. This is more flexible than a single `make.conf` entry, allowing you to specify flags for exact package versions or categories. For example:
+  - `dev-lang/python:3.13 threads sqlite`: Enables `threads` and `sqlite` support specifically for the Python 3.13 build.
+  - `dev-vcs/git curl gpg`: Ensures Git is built with `curl` (for HTTP/S) and `gpg` (for signing) support.
+- **`package.license`**: To avoid interactive prompts for license agreements, we now use `/etc/portage/package.license/` to accept all licenses, which is the modern replacement for `ACCEPT_LICENSE` in `make.conf`.
+- **Expanded Package List**: The `emerge` command now installs a more complete data science and development toolchain, including **SciPy**, **scikit-learn**, **lxml**, **Git**, and **Neovim**.
 
 ---
 
-### \#\# 3. The `.envrc` Script
+### \#\# Step 2: The `direnv` Configuration (`.envrc`)
 
-This script is the core of the automation. It tells `direnv` how to manage the Podman container and the shell environment. Paste this into your `.envrc` file.
+This file remains unchanged. It automates the process of building the image, running the container, and cleaning up afterward.
+
+Paste the following into your `.envrc` file:
 
 ```bash
-#!/usr/bin/env bash
+# .envrc - Direnv configuration for the Podman-based dev environment
 
 # --- Configuration ---
-# Use the directory name for unique image and container names.
-PROJECT_NAME=$(basename "$PWD")
-IMAGE_NAME="${PROJECT_NAME}-img"
-CONTAINER_NAME="${PROJECT_NAME}-ctr"
+IMAGE_NAME="gentoo-py13-dev"
+CONTAINER_NAME="gentoo-py13-dev-container-$$" # $$ ensures a unique name per shell
 
 # --- Helper Functions ---
-
-# A function to check if the container is running
-is_container_running() {
-  podman container inspect "${CONTAINER_NAME}" --format '{{.State.Running}}' 2>/dev/null | grep -q "true"
+image_exists() {
+  podman image exists "$1"
+}
+container_running() {
+  podman ps --filter "name=${CONTAINER_NAME}" --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"
 }
 
-# A DRY (Don't Repeat Yourself) function to execute commands inside the container
-in-container() {
-  podman exec -it -w "/app/notebooks" "${CONTAINER_NAME}" "$@"
-}
-
-
-# --- Main Setup Logic ---
-
-# Check for podman dependency
-if ! has podman; then
-  echo "Error: podman is not installed."
-  exit 1
-fi
-
+# --- Main Logic ---
 # 1. Build the container image if it doesn't exist
-if ! podman image exists "${IMAGE_NAME}"; then
-  echo "Image '${IMAGE_NAME}' not found. Building..."
-  podman build -t "${IMAGE_NAME}" .
-  echo "Image built successfully."
+if ! image_exists "$IMAGE_NAME"; then
+  echo "--- Building container image: $IMAGE_NAME ---"
+  podman build -t "$IMAGE_NAME" -f Containerfile .
 fi
 
-# 2. Start the container if it's not running
-if ! is_container_running; then
-  echo "Starting container '${CONTAINER_NAME}'..."
-  # The --userns=keep-id flag ensures file permissions match your host user.
-  # The :Z mount option handles SELinux permissions.
+# 2. Start the development container if it's not already running
+if ! container_running; then
+  echo "--- Starting container: $CONTAINER_NAME ---"
   podman run \
-    --name "${CONTAINER_NAME}" \
-    --userns=keep-id \
-    -v "${PWD}/notebooks:/app/notebooks:Z" \
+    --name "$CONTAINER_NAME" \
+    -d \
+    -w /app \
+    -v "$(pwd)":/app:z \
+    -v "$HOME/.zshrc":/home/dev/.zshrc:ro \
+    -v "$HOME/.config/zsh":/home/dev/.config/zsh:ro \
     -p 127.0.0.1:8888:8888 \
-    -d --rm \
-    "${IMAGE_NAME}"
-  echo "Container started."
+    "$IMAGE_NAME" \
+    sleep infinity > /dev/null
 fi
 
-# 3. Augment the shell environment
+# 3. Create a handy alias to enter the container
+alias enter-dev="podman exec -it -u dev $CONTAINER_NAME zsh"
+echo "✅ Dev environment ready. Use 'enter-dev' to get a shell in the container."
 
-# Add a custom indicator to the shell prompt
-export PS1="(🐍 gentoo) ${PS1}"
-
-# Define functions that wrap commands to run them inside the container.
-# Using functions is more robust than shell aliases.
-python() { in-container python "$@"; }
-pip() { in-container pip "$@"; }
-jupyter() { in-container jupyter "$@"; }
-
-# Export the functions so they are available in the shell
-export -f python pip jupyter
-
-# Provide a helper function to manually stop the environment's container
-stop-dev-env() {
-  echo "Stopping container '${CONTAINER_NAME}'..."
-  podman stop "${CONTAINER_NAME}"
+# --- Cleanup Function ---
+on_exit() {
+  echo "--- Stopping and removing container: $CONTAINER_NAME ---"
+  podman stop "$CONTAINER_NAME" > /dev/null
+  podman rm "$CONTAINER_NAME" > /dev/null
+  echo "🧹 Environment cleaned up."
 }
-
-echo "✅ Gentoo + Python 3.13 environment is active."
-echo "   - Jupyter Lab URL: http://localhost:8888"
-echo "   - Available commands: python, pip, jupyter"
-echo "   - To stop the container, run: stop-dev-env"
+add_on_exit on_exit
 ```
 
 ---
 
-### \#\# 4. Activating the Environment
+### \#\# Step 3: The Development Workflow 🧑‍💻
 
-Now you're ready to activate the environment.
+Your workflow is the same as before, but now you have more tools available inside the container.
 
-1.  Navigate to your project directory in your terminal:
-
-    ```bash
-    cd my-gentoo-jupyter
-    ```
-
-2.  The first time you enter the directory, `direnv` will show a security warning. You need to explicitly allow the script to run:
+1.  **Activate Environment**:
 
     ```bash
-    direnv allow .
+    cd my-python-project
+    direnv allow
     ```
 
-3.  `direnv` will now execute the `.envrc` script. It will:
-    - **Build the image:** You will see the output from Podman as it builds the Gentoo image. This will take a while.
-    - **Start the container:** Once the image is built, Podman will start the container in the background.
-    - **Activate the environment:** Your shell prompt will change, and you'll see the success message.
+    If you already have an older image built, you may want to remove it (`podman rmi gentoo-py13-dev`) to trigger a rebuild with the new `Containerfile`.
 
-Your terminal should look something like this:
+2.  **Enter the Container**:
 
-```
-$ cd my-gentoo-jupyter
-direnv: loading ~/my-gentoo-jupyter/.envrc
-Image 'my-gentoo-jupyter-img' not found. Building...
-STEP 1/8: FROM gentoo/stage3-amd64-systemd
-... (lots of build output) ...
-Image built successfully.
-Starting container 'my-gentoo-jupyter-ctr'...
-... (container ID) ...
-Container started.
-✅ Gentoo + Python 3.13 environment is active.
-   - Jupyter Lab URL: http://localhost:8888
-   - Available commands: python, pip, jupyter
-   - To stop the container, run: stop-dev-env
-(🐍 gentoo) $
-```
+    ```bash
+    enter-dev
+    ```
 
-### \#\# 5. Using the Environment
+3.  **Launch Jupyter Notebook**:
 
-Your environment is now active.
+    ```bash
+    # Inside the container
+    jupyter notebook --ip=0.0.0.0 --port=8888
+    ```
 
-- **Check Python Version:** Verify that you are using Python 3.13 from the container.
+    Access it from your host browser using the URL provided in the terminal.
 
-  ```bash
-  (🐍 gentoo) $ python --version
-  Python 3.13.x
-  ```
+4.  **Exit and Cleanup**:
 
-- **Access Jupyter Lab:** Open your web browser and navigate to **http://localhost:8888**. You will see the Jupyter Lab interface, and any notebook you create will be saved in the `notebooks/` directory on your host machine.
-
-- **Install Packages:** You can install packages using `pip` directly.
-
-  ```bash
-  (🐍 gentoo) $ pip install scikit-learn
-  ```
-
-- **Leaving the Environment:** When you navigate out of the directory, `direnv` automatically unloads the environment, restoring your original shell prompt and removing the custom functions.
-
-  ```bash
-  (🐍 gentoo) $ cd ..
-  direnv: unloading
-  $
-  ```
-
-  The container will continue running in the background. When you `cd` back in, `direnv` will simply reconnect to it.
-
-- **Stopping the Container:** To stop the container and free up resources, run the custom command we created:
-
-  ```bash
-  (🐍 gentoo) $ stop-dev-env
-  Stopping container 'my-gentoo-jupyter-ctr'...
-  ```
+    ````bash
+    # Exit the container shell with 'exit' or Ctrl+D
+    # Then, leave the project directory
+    cd ..
+    ```direnv` will automatically stop and remove the container.
+    ````
