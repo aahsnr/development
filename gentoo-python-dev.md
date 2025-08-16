@@ -36,7 +36,7 @@ Paste the following content into your `Containerfile`:
 
 ```dockerfile
 # Use a recent, valid official Gentoo stage3 image
-FROM gentoo/stage3:nomultilib-20240804
+FROM gentoo/stage3:nomultilib-20250811
 
 # 1. Create a make.conf to define global build settings and optimizations
 RUN cat <<'EOF' > /etc/portage/make.conf
@@ -48,7 +48,7 @@ CXXFLAGS="${COMMON_FLAGS}"
 FCFLAGS="${COMMON_FLAGS}"
 FFLAGS="${COMMON_FLAGS}"
 RUSTFLAGS="-C opt-level=3 -C target-cpu=native"
-MAKEOPTS="-j$(nproc)"
+MAKEOPTS="-j10"
 
 # --- Portage Behavior Settings ---
 EMERGE_DEFAULT_OPTS="--keep-going=y"
@@ -61,7 +61,7 @@ PYTHON_SINGLE_TARGET="python3_13"
 EOF
 
 # 2. Sync the Portage tree to get the latest package definitions
-RUN emerge-webrsync && emerge --sync --quiet
+RUN emerge-webrsync && emerge --sync
 
 # 3. Set per-package USE flags in a single configuration file
 RUN mkdir -p /etc/portage/package.use && \
@@ -81,21 +81,20 @@ EOF
 #    Step A: Calculate dependencies and write required config changes
 RUN emerge --autounmask-write --verbose --nodeps \
     dev-lang/python:3.13 \
-    dev-python/jupyter-notebook \
+    dev-python/jupyter \
     dev-python/pandas \
     dev-python/matplotlib \
     sci-libs/scipy \
     dev-python/scikit-learn \
     dev-python/lxml \
     dev-vcs/git \
-    app-editors/neovim \
     app-shells/zsh
 
 #    Step B: Apply the changes and then perform the actual installation
 RUN etc-update --automode -5 && \
     emerge --verbose \
     dev-lang/python:3.13 \
-    dev-python/jupyter-notebook \
+    dev-python/jupyter \
     dev-python/pandas \
     dev-python/matplotlib \
     sci-libs/scipy \
@@ -106,12 +105,12 @@ RUN etc-update --automode -5 && \
     app-shells/zsh
 
 # 5. Create a non-root user for development
-RUN useradd --create-home --shell /bin/zsh dev
+RUN useradd --create-home --shell /usr/bin/zsh dev
 
 # 6. Set up the working environment
 WORKDIR /app
 USER dev
-CMD ["/bin/zsh"]
+CMD ["/usr/bin/zsh"]
 ```
 
 ### Key Changes and Explanations
